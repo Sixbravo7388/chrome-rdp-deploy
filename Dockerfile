@@ -1,88 +1,79 @@
 FROM ubuntu:22.04
 
+# ============================================
+# 1. INSTALL DESKTOP + VNC + noVNC
+# ============================================
 ENV DEBIAN_FRONTEND=noninteractive
-
-# ============================================
-# 1. BASE DEPENDENCIES
-# ============================================
-RUN apt update -y && apt upgrade -y && \
-    apt install --no-install-recommends -y \
-        wget \
-        curl \
-        sudo \
-        xfce4 \
-        xfce4-goodies \
-        dbus-x11 \
-        x11-xserver-utils \
-        firefox \
-        tzdata \
-        nano \
-        vim \
-        git \
+RUN apt update -y && apt install --no-install-recommends -y \
+    xfce4 \
+    xfce4-goodies \
+    tigervnc-standalone-server \
+    novnc \
+    websockify \
+    sudo \
+    wget \
+    curl \
+    firefox \
+    dbus-x11 \
+    x11-xserver-utils \
+    nano \
+    vim \
+    git \
+    net-tools \
     && apt clean \
     && rm -rf /var/lib/apt/lists/*
 
 # ============================================
-# 2. CHROME RD DEPENDENCIES (FIXES ERROR 100)
-# ============================================
-RUN apt update -y && apt install -y \
-    libgbm1 \
-    libasound2 \
-    libatk-bridge2.0-0 \
-    libgtk-3-0 \
-    libxss1 \
-    --no-install-recommends \
-    && apt clean \
-    && rm -rf /var/lib/apt/lists/*
-
-# ============================================
-# 3. INSTALL CHROME REMOTE DESKTOP
-# ============================================
-RUN wget -q https://dl.google.com/linux/direct/chrome-remote-desktop_current_amd64.deb && \
-    apt install -y ./chrome-remote-desktop_current_amd64.deb && \
-    rm chrome-remote-desktop_current_amd64.deb
-
-# ============================================
-# 4. CREATE ADMIN USER
+# 2. CREATE ADMIN USER
 # ============================================
 RUN useradd -m -s /bin/bash admin && \
     echo "admin:7388" | chpasswd && \
-    usermod -aG sudo admin && \
     echo "admin ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 
 # ============================================
-# 5. FIX XWRAPPER
+# 3. SETUP VNC SERVER
+# ============================================
+RUN mkdir -p /home/admin/.vnc && \
+    echo '#!/bin/bash\nxrdb $HOME/.Xresources\nstartxfce4 &' > /home/admin/.vnc/xstartup && \
+    chmod +x /home/admin/.vnc/xstartup && \
+    echo "7388" | vncpasswd -f > /home/admin/.vnc/passwd && \
+    chmod 600 /home/admin/.vnc/passwd && \
+    chown -R admin:admin /home/admin/.vnc
+
+# ============================================
+# 4. FIX XWRAPPER PERMISSIONS
 # ============================================
 RUN sed -i 's/allowed_users=console/allowed_users=anybody/g' /etc/X11/Xwrapper.config
 
 # ============================================
-# 6. CONFIGURE CHROME RD SESSION
-# ============================================
-RUN mkdir -p /etc/chrome-remote-desktop && \
-    echo 'exec /usr/bin/startxfce4' > /etc/chrome-remote-desktop/session && \
-    echo "1920x1080" > /etc/chrome-remote-desktop/desktop-sizes
-
-# ============================================
-# 7. YOUR CHROME RDP AUTHORIZATION COMMAND
-# ============================================
-RUN DISPLAY= /opt/google/chrome-remote-desktop/start-host \
-    --code="4/0ASc3gC23QAo2D206FVBsVJkDPYkkGwSnHTdNGtls_OJstZ48KSUPw2GOY2QNvLTqHmTTVg" \
-    --redirect-url="https://remotedesktop.google.com/_/oauthredirect" \
-    --name=$(hostname)
-
-# ============================================
-# 8. STARTUP SCRIPT
+# 5. STARTUP SCRIPT
 # ============================================
 RUN echo '#!/bin/bash\n\
+# Start VNC server as admin\n\
+su - admin -c "vncserver :1 -geometry 1920x1080 -depth 24 -localhost no" &\n\
+sleep 3\n\
+\n\
+# Start noVNC web interface\n\
+websockify -D --web=/usr/share/novnc/ 8080 localhost:5901\n\
+sleep 2\n\
+\n\
 echo "========================================="\n\
-echo "🚀 Starting Chrome Remote Desktop..."\n\
+echo "✅ VNC + noVNC is READY!"\n\
 echo "========================================="\n\
-/opt/google/chrome-remote-desktop/chrome-remote-desktop --start &\n\
-echo "✅ Chrome RD running!"\n\
-echo "📱 Connect at: https://remotedesktop.google.com/access"\n\
-echo "👤 Username: admin"\n\
-echo "🔑 Password: 7388"\n\
+echo "🌐 Web Access:  https://YOUR-RAILWAY-URL:8080/vnc.html"\n\
+echo "🔑 Password:    7388"\n\
+echo "👤 Username:    admin"\n\
 echo "========================================="\n\
+\n\
+# Keep container alive\n\
 tail -f /dev/null' > /start.sh && chmod +x /start.sh
 
+# ============================================
+# 6. EXPOSE PORTS
+# ============================================
+EXPOSE 8080 5901
+
+# ============================================
+# 7. START CONTAINER
+# ============================================
 CMD ["/start.sh"]
